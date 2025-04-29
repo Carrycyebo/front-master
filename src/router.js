@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import Task1 from './views/Task1/Task1.vue';
-import Task2 from './views/Task2/Task2.vue';
+import Task2 from './views/Task2/HeatwaveDashboard.vue';
 import Task3 from './views/Task3/Task3.vue';
 import operation_record from './views/Task3/operation_record.vue';
 import MainLayout from './layout/MainLayout.vue';
