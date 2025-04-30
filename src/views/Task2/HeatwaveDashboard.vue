@@ -235,6 +235,30 @@ export default {
             });
     },
     methods: {
+
+        fixAndParseDailyInfo(input) {
+  if (!input || typeof input !== 'string') return [];
+
+  try {
+    // 步骤 1: 替换非法括号为 JSON 合法的中括号
+    let cleaned = input.replace(/\(/g, '[').replace(/\)/g, ']');
+
+    // 步骤 2: 给属性名加双引号
+    cleaned = cleaned.replace(/([a-zA-Z_][a-zA-Z0-9_]*):/g, '"$1":');
+
+    // 步骤 3: 替换单引号为双引号
+    cleaned = cleaned.replace(/'/g, '"');
+
+    // 步骤 4: 移除多余的尾随逗号（只作用于数组结尾）
+    cleaned = cleaned.replace(/,(?=\s*\])/g, '');
+
+    // 步骤 5: 尝试解析
+    return JSON.parse(cleaned);
+  } catch (e) {
+    console.error('无法修复并解析 daily_info:', e.message);
+    return [];
+  }
+},
         async loadData() {
     try {
         const csvPath = '/data/eventually_heatwave.csv';
@@ -255,27 +279,24 @@ export default {
         const geojsonData = await geojsonResponse.json();
 
         this.allEvents = csvData.map(row => {
-            const props = {};
-            this.variableOptions.forEach(varName => {
-                if (varName ==='start_date' || varName === 'end_date') {
-                    const dateStr = row[varName];
-                    if (dateStr) {
-                       const cleanDateStr = dateStr.split('T')[0];
-                                props[varName] = new Date(cleanDateStr);}else{
-                        console.warn(`日期字段为空: ${varName}`);
-                        props[varName] = null;
-                    }
-                } else if (['duration','max_anomaly', 'cumulative_anomaly', 'centroid_change_rate',
-                    'vortex_count', 'vortex_coverage_ratio', 'cumulative_salinity_anomaly',
-                   'mean_wind', 'wind_anomaly','mean_heat_flux', 'heat_flux_trend'].includes(varName)) {
-                    props[varName] = Number(row[varName]);
-                } else {
-                    props[varName] = row[varName];
-                }
-
-            });
-            return { properties: props };
-        });
+  const props = {};
+  this.variableOptions.forEach(varName => {
+    if (varName === 'start_date' || varName === 'end_date') {
+      const dateStr = row[varName];
+      props[varName] = dateStr ? new Date(dateStr.split('T')[0]) : null;
+    } else if (['duration', 'max_anomaly', 'cumulative_anomaly', 'centroid_change_rate',
+                'vortex_count', 'vortex_coverage_ratio', 'cumulative_salinity_anomaly',
+                'mean_wind', 'wind_anomaly', 'mean_heat_flux', 'heat_flux_trend'].includes(varName)) {
+      props[varName] = Number(row[varName]);
+    } else if (varName === 'daily_info') {
+      const rawData = row[varName];
+      props[varName] = this.fixAndParseDailyInfo(rawData);
+    } else {
+      props[varName] = row[varName];
+    }
+  });
+  return { properties: props };
+});
 
 // 处理GeoJSON中的日期
                 this.geojsonFeatures = geojsonData.features.map(feature => {
@@ -396,27 +417,45 @@ filterEvents() {
         },
 
         renderHeatmap() {
-            const heatData = this.filteredEvents.flatMap(event => {
-                const intensity = event.properties.cumulative_anomaly;
-                return event.properties.daily_info.map(day => {
-                    const weight = this.heatmapType === 'intensity'
-                       ? day.intensity / intensity * 2
-                        : 1;
-                    return [day.centroid.lat, day.centroid.lon, weight];
-                });
-            });
+    const heatData = this.filteredEvents.flatMap(event => {
+        const props = event.properties;
+        let dailyInfo = [];
 
-            if (this.map) {
-                this.heatLayer = L.heatLayer(heatData, {
-                    radius: this.heatmapRadius,
-                    blur: 15,
-                    gradient: this.heatmapGradient,
-                    maxZoom: 17
-                }).addTo(this.map);
-            } else {
-                console.warn('地图未初始化，无法渲染热力层');
+        try {
+            if (typeof props.daily_info === 'string') {
+                dailyInfo = JSON.parse(props.daily_info);
+            } else if (Array.isArray(props.daily_info)) {
+                dailyInfo = props.daily_info;
             }
-        },
+        } catch (e) {
+            console.warn('daily_info 解析失败:', props.event_id, e);
+        }
+
+        const intensity = props.cumulative_anomaly;
+
+        return dailyInfo.map(day => {
+            const weight = this.heatmapType === 'intensity'
+                ? day.intensity / intensity * 2
+                : 1;
+
+            return [day.centroid?.lat ?? 0, day.centroid?.lon ?? 0, weight];
+        });
+    });
+
+    if (this.map && heatData.length > 0) {
+        if (this.heatLayer) {
+            this.map.removeLayer(this.heatLayer);
+        }
+        this.heatLayer = L.heatLayer(heatData, {
+            radius: this.heatmapRadius,
+            blur: 15,
+            gradient: this.heatmapGradient,
+            maxZoom: 17
+        }).addTo(this.map);
+    } else {
+        console.warn('无有效热力点数据');
+    }
+},
 
         toggleHeatmap() {
             this.showHeatmap =!this.showHeatmap;
